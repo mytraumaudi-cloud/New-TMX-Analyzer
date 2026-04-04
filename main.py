@@ -8,16 +8,13 @@ import csv
 
 app = FastAPI(title="TMX Analyzer API")
 
-
 # Simple word count function
 def count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
-
 @app.get("/")
 def root():
     return {"message": "TMX Analyzer is running"}
-
 
 @app.post("/analyze")
 async def analyze_tmx(
