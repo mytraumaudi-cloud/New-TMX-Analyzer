@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from typing import List
+from typing import Annotated
 import xml.etree.ElementTree as ET
 import re
 import io
@@ -12,19 +12,24 @@ app = FastAPI(title="TMX Analyzer API")
 def count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
+
 @app.get("/")
 def root():
     return {"message": "TMX Analyzer is running"}
 
+
 @app.post("/analyze")
 async def analyze_tmx(
-    files: List[UploadFile] = File(...),  # Accept multiple files
-    download_csv: bool = Form(False)       # Use Form for Swagger UI toggle
+    files: Annotated[list[UploadFile], File(...)],  # ✅ FIXED
+    download_csv: bool = Form(False)
 ):
     results = []
 
     for file in files:
         try:
+            # ✅ Ensure file pointer is at start
+            file.file.seek(0)
+
             context = ET.iterparse(file.file, events=("start", "end"))
 
             source_lang = None
@@ -40,15 +45,23 @@ async def analyze_tmx(
 
                 if event == "end" and elem.tag == "tu":
                     tu_count += 1
+
                     for tuv in elem.findall("tuv"):
                         lang = tuv.attrib.get("{http://www.w3.org/XML/1998/namespace}lang")
                         seg = tuv.find("seg")
+
                         if seg is None or not seg.text:
                             continue
+
                         word_count = count_words(seg.text)
+
                         if lang:
                             languages.add(lang)
-                            word_counts_by_lang[lang] = word_counts_by_lang.get(lang, 0) + word_count
+                            word_counts_by_lang[lang] = (
+                                word_counts_by_lang.get(lang, 0) + word_count
+                            )
+
+                    # ✅ Free memory for large files
                     elem.clear()
 
             source_word_count = word_counts_by_lang.get(source_lang, 0)
@@ -70,7 +83,7 @@ async def analyze_tmx(
                 "error": str(e)
             })
 
-    # CSV export
+    # ✅ CSV export
     if download_csv:
         output = io.StringIO()
 
@@ -99,15 +112,20 @@ async def analyze_tmx(
                 "source_word_count": r.get("source_word_count"),
                 "total_word_count": r.get("total_word_count")
             }
+
             for lang in all_langs:
                 row[lang] = r.get("word_counts_by_language", {}).get(lang, 0)
+
             writer.writerow(row)
 
         output.seek(0)
+
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=tmx_analysis.csv"}
+            headers={
+                "Content-Disposition": "attachment; filename=tmx_analysis.csv"
+            }
         )
 
     return {"files_analyzed": results}
